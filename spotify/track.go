@@ -27,6 +27,14 @@ func (t *Track) Artist() string {
 	return t.spotifyTrack.Artist[0].GetName()
 }
 
+func (t *Track) Album() string {
+	if t.spotifyTrack.Album == nil {
+		return "Unknown"
+	}
+
+	return t.spotifyTrack.GetAlbum().GetName()
+}
+
 func (t *Track) Image() string {
 	image := t.spotifyTrack.GetAlbum().GetCoverGroup().GetImage()
 	if len(image) > 0 {

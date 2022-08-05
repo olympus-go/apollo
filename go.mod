@@ -1,18 +1,16 @@
-module github.com/eolso/apollo
+module github.com/olympus-go/apollo
 
 go 1.18
 
 require (
 	github.com/eolso/librespot-golang v0.0.0-00010101000000-000000000000
 	github.com/rs/zerolog v1.26.1
-	github.com/sahilm/fuzzy v0.1.0
 	golang.org/x/net v0.0.0-20220624214902-1bab6f366d9e
 )
 
 require (
 	github.com/badfortrains/mdns v0.0.0-20160325001438-447166384f51 // indirect
 	github.com/golang/protobuf v1.5.0 // indirect
-	github.com/kylelemons/godebug v1.1.0 // indirect
 	github.com/miekg/dns v1.1.50 // indirect
 	github.com/stretchr/testify v1.5.1 // indirect
 	golang.org/x/crypto v0.0.0-20211215165025-cf75a172585e // indirect
@@ -23,4 +21,4 @@ require (
 	google.golang.org/protobuf v1.27.1 // indirect
 )
 
-replace github.com/eolso/librespot-golang => ../librespot-golang
+replace github.com/eolso/librespot-golang => ../../eolso/librespot-golang
