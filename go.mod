@@ -3,7 +3,7 @@ module github.com/olympus-go/apollo
 go 1.18
 
 require (
-	github.com/eolso/librespot-golang v0.0.0-20220807201633-8b79614061bf
+	github.com/eolso/librespot-golang v0.0.0-20220807203348-37e91c845e82
 	github.com/rs/zerolog v1.26.1
 )
 
