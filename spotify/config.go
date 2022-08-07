@@ -28,6 +28,10 @@ type PlayerConfig struct {
 	// PreloadSize sets the number of enqueued songs to download ahead of time (stored in memory if CacheSize == 0)
 	// Defaults to 2.
 	PreloadSize int `json:"preload_size"`
+
+	// OAuthCallback sets the callback address for oauth logins
+	// Defaults to "" (localhost:8888/callback).
+	OAuthCallback string `json:"oauth_callback"`
 }
 
 func DefaultPlayerConfig() PlayerConfig {
@@ -55,5 +59,6 @@ func DefaultPlayerConfig() PlayerConfig {
 		CacheDir:      filepath.Join(configHomeDir, "cache"),
 		BitRate:       160,
 		PreloadSize:   2,
+		OAuthCallback: "",
 	}
 }

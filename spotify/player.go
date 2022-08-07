@@ -62,7 +62,7 @@ func (p *Player) Login() error {
 		return err
 	}
 
-	p.session, err = librespot.LoginOAuth("georgetuney", os.Getenv("SPOTIFY_ID"), os.Getenv("SPOTIFY_SECRET"))
+	p.session, err = librespot.LoginOAuth("georgetuney", os.Getenv("SPOTIFY_ID"), os.Getenv("SPOTIFY_SECRET"), p.config.OAuthCallback)
 	if err != nil {
 		return fmt.Errorf("failed to initialize spotify client: %w", err)
 	}
