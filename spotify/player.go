@@ -1,355 +1,307 @@
 package spotify
 
-// OLD FILE
-
 import (
-	"errors"
 	"fmt"
 	"github.com/eolso/librespot-golang/Spotify"
 	"github.com/eolso/librespot-golang/librespot"
 	"github.com/eolso/librespot-golang/librespot/core"
-	"github.com/eolso/librespot-golang/librespot/metadata"
 	"github.com/eolso/librespot-golang/librespot/utils"
 	"github.com/rs/zerolog/log"
-	"golang.org/x/net/context"
+	"io"
 	"io/ioutil"
 	"os"
-	"strings"
-	"time"
+	"path/filepath"
 )
 
-const (
-	channels  = 2                   // 1 for mono, 2 for stereo
-	frameRate = 48000               // audio sampling rate
-	frameSize = 960                 // uint16 size of each audio frame
-	maxBytes  = (frameSize * 2) * 2 // max size of opus data
-	//defaultBufferSize = 25000000            // 25MB
-)
-
-//func init() {
-//	if err := os.MkdirAll(songDataDir, 0755); err != nil {
-//		log.Fatal().Err(err).Msg("failed to create temp dir")
-//	}
-//}
-
-//{
-//	{
-//		[]
-//		The Off-Season
-//		spotify:album:4JAvwK4APPArjIsOdGoJXX
-//	}
-//	[
-//		{
-//			J. Cole
-//			spotify:artist:6l3HvQ5sa6mXTsMTB19rO5
-//		}
-//	]
-//	https://i.scdn.co/image/ab67616d00001e0210e6745bb2f179dd3616b85f a m a r i spotify:track:2cnKST6T9qUo2i907lm8zX 148421 72
-//}
-
-type State int8
-
-const (
-	StoppedState State = iota
-	PausedState
-	PlayingState
-)
-
-type TrackData struct {
-	metadata.Track
-	TimeElapsed float64
-	//Sample      []byte
-}
-
-type trackInfo struct {
-	metadata.Track
-	data [][]byte
+var targetCodecs = []Spotify.AudioFile_Format{
+	Spotify.AudioFile_OGG_VORBIS_320,
+	Spotify.AudioFile_OGG_VORBIS_160,
+	Spotify.AudioFile_OGG_VORBIS_96,
 }
 
 type Player struct {
-	session          *core.Session
-	state            State
-	currentlyPlaying TrackData
-	queueInfo        []metadata.Track
-	isStarted        bool
+	TrackQueue []Track
 
-	// trackQueue is a queue of undownloaded tracks to send to
-	trackQueue chan metadata.Track
+	config  PlayerConfig
+	session *core.Session
+	errChan chan error
 
-	// outQueue is a queue of downloaded tracks to be read from
-	outQueue chan trackInfo
-
-	// outStream is the one-stop-shop for audio data
-	outStream chan []byte
-
-	// stateChan is used to transmit state changes
-	stateChan chan State
-
-	skipChan chan bool
-
-	// encode is an optional encoding function to run on downloaded bytes
-	encode func([]byte) ([][]byte, error)
+	trackQueue       chan Track
+	downloadedTracks chan []byte
 }
 
-func NewPlayer() *Player {
-	//p := &Player{}
-	return &Player{
-		session:    nil,
-		state:      PlayingState,
-		isStarted:  false,
-		trackQueue: make(chan metadata.Track, 100),
-		outQueue:   make(chan trackInfo, 2),
-		outStream:  make(chan []byte),
-		stateChan:  make(chan State),
-		skipChan:   make(chan bool),
+func NewPlayer(config PlayerConfig) *Player {
+	player := Player{
+		config:           config,
+		errChan:          make(chan error),
+		downloadedTracks: make(chan []byte, 3),
 	}
+
+	if err := os.MkdirAll(config.ConfigHomeDir, 0755); err != nil {
+		log.Warn().Err(err).Msg("failed to create config home directory")
+	}
+	if err := os.MkdirAll(config.CacheDir, 0755); err != nil {
+		log.Warn().Err(err).Msg("failed to create song cache directory")
+	}
+
+	// TODO make this configurable
+	go player.errorManager()
+
+	return &player
 }
 
-// TODO this should be way better, but might need to fork librespot to allow it to be
 func (p *Player) Login() error {
 	if p.session != nil {
 		return ErrPlayerAlreadyLoggedIn
 	}
 
-	var err error
+	// Check if auth token already exists
+	authBytes, err := os.ReadFile(filepath.Join(p.config.ConfigHomeDir, "auth.token"))
+	if err == nil && len(authBytes) != 0 {
+		p.session, err = librespot.LoginSaved("asdf", authBytes, "georgetuney")
+		return err
+	}
+
 	p.session, err = librespot.LoginOAuth("georgetuney", os.Getenv("SPOTIFY_ID"), os.Getenv("SPOTIFY_SECRET"))
 	if err != nil {
 		return fmt.Errorf("failed to initialize spotify client: %w", err)
 	}
 
+	err = ioutil.WriteFile(filepath.Join(p.config.ConfigHomeDir, "auth.token"), p.session.ReusableAuthBlob(), 0600)
+	if err != nil {
+		log.Warn().Err(err).Msg("failed to write auth token to filesystem")
+	}
+
 	return nil
 }
 
-func (p *Player) EncodeFunc(fn func([]byte) ([][]byte, error)) {
-	p.encode = fn
-}
+func (p *Player) SearchTrack(query string, limit int) ([]Track, error) {
+	var tracks []Track
 
-func (p *Player) Start(ctx context.Context) {
-	if p.isStarted {
-		return
+	uri, ok := ConvertLinkToUri(query)
+
+	if ok && uri.Authority == TrackResourceType {
+		track, err := p.GetTrackById(uri.Path)
+		if err != nil {
+			return nil, err
+		}
+		tracks = append(tracks, track)
+	} else {
+		searchResponse, err := p.session.Mercury().Search(query, limit, p.session.Country(), p.session.Username())
+		if err != nil {
+			return nil, err
+		}
+
+		for _, metadataTrack := range searchResponse.Results.Tracks.Hits {
+			trackUri := NewUri(metadataTrack.Uri)
+			track, err := p.GetTrackById(trackUri.Path)
+			if err != nil {
+				return nil, err
+			}
+			tracks = append(tracks, track)
+		}
 	}
 
-	p.trackManager(ctx)
-	p.stateManager(ctx)
-	p.outStreamManager(ctx)
-
-	p.isStarted = true
+	return tracks, nil
 }
 
-func (p *Player) OutStream() <-chan []byte {
-	return p.outStream
+func (p *Player) GetTrackById(id string) (Track, error) {
+	track, err := p.session.Mercury().GetTrack(utils.Base62ToHex(id))
+	return Track{spotifyTrack: track}, err
 }
 
-func (p *Player) Skip() {
-	p.skipChan <- true
-}
+// Search is a helper function that will is return a list of tracks. If the query is a spotify URI, then it will return
+// the relevant songs the link. If query is a simple string, it will return a track list from whatever the top hit was.
+func (p *Player) Search(query string, limit int) ([]Track, error) {
+	uri, _ := ConvertLinkToUri(query)
+	switch uri.Authority {
+	case ArtistResourceType:
+		artists, err := p.SearchArtist(query, limit)
+		if err != nil {
+			return nil, err
+		}
+		if len(artists) == 0 {
+			return nil, fmt.Errorf("query found no results")
+		}
 
-//func (p *Player) Stop() {
-//	for len(p.queue) > 0 {
-//		<-p.queue
-//	}
-//	if p.state == PlayingState {
-//		p.stopChan <- true
-//	}
-//}
-
-// https://open.spotify.com/playlist/6yfxykP8KUzPO13V5ryCs5?si=b25ce568f1fc480e
-// https://open.spotify.com/track/65LjCuIAEUX2AmWUjD9tA3?si=93c52e238e6b43f7
-
-// SearchTrack searches for a track in spotify. The track and limit parameters are required, but artist and album are
-// optional.
-func (p *Player) SearchTrack(track string, artist string, album string, limit int) ([]metadata.Track, error) {
-	if track == "" {
-		return nil, errors.New("track must be specified")
-	}
-
-	searchResponse, err := p.session.Mercury().Search(track, limit, p.session.Country(), p.session.Username())
-	if err != nil {
-		return nil, err
-	}
-
-	var results []metadata.Track
-	for _, resultTrack := range searchResponse.Results.Tracks.Hits {
-		artistMatch := true
-		albumMatch := true
-
-		if artist != "" {
-			if strings.ToLower(resultTrack.Artists[0].Name) != strings.ToLower(artist) {
-				artistMatch = false
+		var tracks []Track
+		for _, trackId := range artists[0].TopTracks() {
+			track, err := p.GetTrackById(trackId)
+			if err != nil {
+				return nil, err
+			}
+			tracks = append(tracks, track)
+			if len(tracks) == limit {
+				break
 			}
 		}
-		if album != "" {
-			if strings.ToLower(resultTrack.Album.Name) != strings.ToLower(album) {
-				albumMatch = false
+		return tracks, nil
+	case PlaylistResourceType:
+		playlists, err := p.SearchPlaylist(query, limit)
+		if err != nil {
+			return nil, err
+		}
+		if len(playlists) == 0 {
+			return nil, fmt.Errorf("query found no results")
+		}
+
+		var tracks []Track
+		for _, trackId := range playlists[0].Tracks() {
+			track, err := p.GetTrackById(trackId)
+			if err != nil {
+				return nil, err
+			}
+			tracks = append(tracks, track)
+			if len(tracks) == limit {
+				break
 			}
 		}
-		if artistMatch && albumMatch {
-			results = append(results, resultTrack)
+
+		return tracks, nil
+	// Just run a SearchTrack() regardless if it's a TrackResourceType or anything else
+	default:
+		tracks, err := p.SearchTrack(query, limit)
+		if err != nil {
+			return nil, err
+		}
+
+		if len(tracks) > limit {
+			return tracks[:limit], nil
+		} else {
+			return tracks, nil
+		}
+	}
+}
+
+func (p *Player) SearchArtist(query string, limit int) ([]Artist, error) {
+	var artists []Artist
+
+	uri, ok := ConvertLinkToUri(query)
+
+	if ok && uri.Authority == ArtistResourceType {
+		artist, err := p.GetArtistById(uri.Path)
+		if err != nil {
+			return nil, err
+		}
+		artists = append(artists, artist)
+	} else {
+		searchResponse, err := p.session.Mercury().Search(query, limit, p.session.Country(), p.session.Username())
+		if err != nil {
+			return nil, err
+		}
+
+		for _, metadataArtist := range searchResponse.Results.Artists.Hits {
+			artistUri := NewUri(metadataArtist.Uri)
+			artist, err := p.GetArtistById(artistUri.Path)
+			if err != nil {
+				return nil, err
+			}
+			artists = append(artists, artist)
 		}
 	}
 
-	return results, nil
+	return artists, nil
 }
 
-func (p *Player) QueueTrack(track metadata.Track) {
-	p.queueInfo = append(p.queueInfo, track)
-	p.trackQueue <- track
+func (p *Player) GetArtistById(id string) (Artist, error) {
+	artist, err := p.session.Mercury().GetArtist(utils.Base62ToHex(id))
+	return Artist{spotifyArtist: artist}, err
 }
 
-func (p *Player) GetTrackByID(trackID string) ([]byte, error) {
-	track, err := p.session.Mercury().GetTrack(utils.Base62ToHex(trackID))
-	if err != nil {
-		fmt.Println("Error loading track: ", err)
-		return nil, err
+func (p *Player) SearchPlaylist(query string, limit int) ([]Playlist, error) {
+	var playlists []Playlist
+
+	uri, ok := ConvertLinkToUri(query)
+
+	if ok && uri.Authority == PlaylistResourceType {
+		playlist, err := p.GetPlaylistById(uri.Path)
+		if err != nil {
+			return nil, err
+		}
+		playlists = append(playlists, playlist)
+	} else {
+		searchResponse, err := p.session.Mercury().Search(query, limit, p.session.Country(), p.session.Username())
+		if err != nil {
+			return nil, err
+		}
+
+		for _, metadataPlaylist := range searchResponse.Results.Playlists.Hits {
+			playlistUri := NewUri(metadataPlaylist.Uri)
+			playlist, err := p.GetPlaylistById(playlistUri.Path)
+			if err != nil {
+				return nil, err
+			}
+			playlists = append(playlists, playlist)
+		}
 	}
 
+	return playlists, nil
+}
+
+func (p *Player) GetPlaylistById(id string) (Playlist, error) {
+	playlist, err := p.session.Mercury().GetPlaylist(id)
+	if err != nil {
+		return Playlist{}, err
+	}
+
+	return Playlist{id: id, spotifyPlaylist: playlist}, nil
+}
+
+func (p *Player) QueueTrack(track Track) {
+	p.TrackQueue = append(p.TrackQueue, track)
+}
+
+func (p *Player) DownloadTrack(track Track) (io.Reader, error) {
 	var selectedFile *Spotify.AudioFile
-	for _, file := range track.GetFile() {
-		if file.GetFormat() == Spotify.AudioFile_OGG_VORBIS_160 {
-			selectedFile = file
+	for _, file := range track.spotifyTrack.GetFile() {
+		for _, codec := range targetCodecs {
+			if file.GetFormat() == codec {
+				selectedFile = file
+				break
+			}
+		}
+		if selectedFile != nil {
+			break
 		}
 	}
 	if selectedFile == nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to fetch track data %s", track.Id())
 	}
 
-	audioFile, err := p.session.Player().LoadTrack(selectedFile, track.GetGid())
-	if err != nil {
-		return nil, err
-	}
-
-	return ioutil.ReadAll(audioFile)
+	return p.session.Player().LoadTrack(selectedFile, track.spotifyTrack.GetGid())
 }
 
-func (p *Player) GetTrack(track metadata.Track) ([]byte, error) {
-	return p.GetTrackByID(strings.Split(track.Uri, ":")[2])
+func (p *Player) Play() {
+
 }
 
-func (p *Player) Status() string {
-	if p.currentlyPlaying.Name == "" {
-		return ""
-	}
+func (p *Player) Pause() {
 
-	switch p.state {
-	case PlayingState:
-		elapsedDuration, err := time.ParseDuration(fmt.Sprintf("%fs", p.currentlyPlaying.TimeElapsed))
+}
+
+func (p *Player) Stop() {
+
+}
+
+func (p *Player) Next() {
+
+}
+
+func (p *Player) Previous() {
+
+}
+
+func (p *Player) Status() {
+
+}
+
+func (p *Player) OutStream() <-chan []byte {
+	return p.downloadedTracks
+}
+func (p *Player) errorManager() {
+	for err := range p.errChan {
 		if err != nil {
-			return ""
+			log.Error().Err(err).Msg("")
 		}
-		lengthDuration, err := time.ParseDuration(fmt.Sprintf("%dms", p.currentlyPlaying.Duration))
-		if err != nil {
-			return ""
-		}
-
-		return fmt.Sprintf("%s - %s (%s/%s)", p.currentlyPlaying.Name, p.currentlyPlaying.Artists[0].Name, elapsedDuration.String(), lengthDuration.String())
-		//
-	case PausedState:
-		//
-	case StoppedState:
-		//
 	}
-
-	return "unknown status"
 }
-
-func (p *Player) Queue() string {
-	queueStr := ""
-	for _, track := range p.queueInfo {
-		queueStr += fmt.Sprintf("%s - %s\n", track.Name, track.Artists[0].Name)
-	}
-	return queueStr
-}
-
-func (p *Player) trackManager(ctx context.Context) {
-	go func() {
-		for {
-			select {
-			// Player should begin listening on queueChan for incoming requests
-			case track := <-p.trackQueue:
-				audioBytes, err := p.GetTrack(track)
-				if err != nil {
-					log.Error().Err(err).Str("track", track.Name).Msg("failed to get track")
-					continue
-				}
-
-				encodedTrack, err := p.encode(audioBytes)
-				if err != nil {
-					log.Error().Err(err).Str("track", track.Name).Msg("failed to encode track")
-					continue
-				}
-
-				// Tracks should be loaded off of queue chan and their data should be stored in audioBuffer
-				// If audio buffer is currently full, this should block instead.
-				p.outQueue <- trackInfo{Track: track, data: encodedTrack}
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
-}
-
-func (p *Player) stateManager(ctx context.Context) {
-	go func() {
-		for {
-			select {
-			case state := <-p.stateChan:
-				if state != p.state {
-
-				}
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
-}
-
-// outStreamManager launches a
-func (p *Player) outStreamManager(ctx context.Context) {
-	go func() {
-		for {
-			select {
-			case trackData := <-p.outQueue:
-				p.currentlyPlaying = TrackData{Track: trackData.Track, TimeElapsed: 0.0}
-				if len(p.queueInfo) > 1 {
-					p.queueInfo = p.queueInfo[1:]
-				} else {
-					p.queueInfo = nil
-				}
-			TrackLoop:
-				for _, sample := range trackData.data {
-					select {
-					//case <-p.playChan:
-					//	<-p.playChan
-					case <-p.skipChan:
-						break TrackLoop
-					//case <-p.pauseChan:
-					//	p.playChan <- false
-					default:
-					}
-					p.outStream <- sample
-					//p.outStream <- TrackData{TimeElapsed: timeElapsed, Sample: sample}
-					p.currentlyPlaying.TimeElapsed += 20.0 / 1000 // 20ms
-					//timeElapsed += 20.0 / 1000 // 20 ms
-				}
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
-}
-
-/*
-player := spotify.NewPlayer()
-tracks := player.SearchTrack("your graduation", "stand atlantic")
-player.Queue(tracks[0])
-outStream := player.OutStream()
-player.Skip()
-player.Pause()
-player.ClearQueue()
-
-for b := range outStream {
-
-}
-
-
-*/
