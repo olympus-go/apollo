@@ -30,7 +30,7 @@ type PlayerConfig struct {
 	PreloadSize int `json:"preload_size"`
 
 	// OAuthCallback sets the callback address for oauth logins
-	// Defaults to "" (localhost:8888/callback).
+	// Defaults to "" (http://localhost:8888/callback).
 	OAuthCallback string `json:"oauth_callback"`
 }
 
@@ -44,7 +44,7 @@ func DefaultPlayerConfig() PlayerConfig {
 		}
 	default:
 		if path, ok := os.LookupEnv("HOME"); ok {
-			configHomeDir = filepath.Join(path, ".apollo", "spotify")
+			configHomeDir = filepath.Join(path, ".local", ".apollo", "spotify")
 		}
 	}
 

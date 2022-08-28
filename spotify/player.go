@@ -8,7 +8,6 @@ import (
 	"github.com/eolso/librespot-golang/librespot/utils"
 	"github.com/rs/zerolog/log"
 	"io"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 )
@@ -20,59 +19,61 @@ var targetCodecs = []Spotify.AudioFile_Format{
 }
 
 type Player struct {
-	TrackQueue []Track
-
 	config  PlayerConfig
 	session *core.Session
-	errChan chan error
-
-	trackQueue       chan Track
-	downloadedTracks chan []byte
 }
 
 func NewPlayer(config PlayerConfig) *Player {
 	player := Player{
-		config:           config,
-		errChan:          make(chan error),
-		downloadedTracks: make(chan []byte, 3),
+		config: config,
 	}
 
-	if err := os.MkdirAll(config.ConfigHomeDir, 0755); err != nil {
-		log.Warn().Err(err).Msg("failed to create config home directory")
+	if config.ConfigHomeDir != "" {
+		if err := os.MkdirAll(config.ConfigHomeDir, 0755); err != nil {
+			log.Warn().Err(err).Msg("failed to create config home directory")
+		}
+		if err := os.MkdirAll(config.CacheDir, 0755); err != nil {
+			log.Warn().Err(err).Msg("failed to create song cache directory")
+		}
 	}
-	if err := os.MkdirAll(config.CacheDir, 0755); err != nil {
-		log.Warn().Err(err).Msg("failed to create song cache directory")
-	}
-
-	// TODO make this configurable
-	go player.errorManager()
 
 	return &player
 }
 
-func (p *Player) Login() error {
+func (p *Player) Login(deviceName string) error {
 	if p.session != nil {
 		return ErrPlayerAlreadyLoggedIn
 	}
 
 	// Check if auth token already exists
-	authBytes, err := os.ReadFile(filepath.Join(p.config.ConfigHomeDir, "auth.token"))
-	if err == nil && len(authBytes) != 0 {
-		p.session, err = librespot.LoginSaved("asdf", authBytes, "georgetuney")
-		return err
+	if p.config.ConfigHomeDir != "" {
+		authBytes, err := os.ReadFile(filepath.Join(p.config.ConfigHomeDir, "auth.token"))
+		if err == nil && len(authBytes) != 0 {
+			p.session, err = librespot.LoginSaved("qwerty", authBytes, deviceName)
+			return err
+		}
 	}
 
-	p.session, err = librespot.LoginOAuth("georgetuney", os.Getenv("SPOTIFY_ID"), os.Getenv("SPOTIFY_SECRET"), p.config.OAuthCallback)
+	var err error
+	p.session, err = librespot.LoginOAuth(deviceName, os.Getenv("SPOTIFY_ID"), os.Getenv("SPOTIFY_SECRET"), p.config.OAuthCallback)
 	if err != nil {
 		return fmt.Errorf("failed to initialize spotify client: %w", err)
 	}
 
-	err = ioutil.WriteFile(filepath.Join(p.config.ConfigHomeDir, "auth.token"), p.session.ReusableAuthBlob(), 0600)
-	if err != nil {
-		log.Warn().Err(err).Msg("failed to write auth token to filesystem")
+	if p.config.ConfigHomeDir != "" {
+		err = os.WriteFile(filepath.Join(p.config.ConfigHomeDir, "auth.token"), p.session.ReusableAuthBlob(), 0600)
+		if err != nil {
+			log.Warn().Err(err).Msg("failed to write auth token to filesystem")
+		}
 	}
 
 	return nil
+}
+
+func (p *Player) LoginWithToken(deviceName string, token string) error {
+	var err error
+	p.session, err = core.LoginOAuthToken(token, deviceName)
+	return err
 }
 
 func (p *Player) SearchTrack(query string, limit int) ([]Track, error) {
@@ -248,7 +249,6 @@ func (p *Player) GetPlaylistById(id string) (Playlist, error) {
 }
 
 func (p *Player) QueueTrack(track Track) {
-	p.TrackQueue = append(p.TrackQueue, track)
 }
 
 func (p *Player) DownloadTrack(track Track) (io.Reader, error) {
@@ -269,6 +269,18 @@ func (p *Player) DownloadTrack(track Track) (io.Reader, error) {
 	}
 
 	return p.session.Player().LoadTrack(selectedFile, track.spotifyTrack.GetGid())
+}
+
+func (p *Player) Username() string {
+	if p.session != nil {
+		return p.session.Username()
+	}
+
+	return ""
+}
+
+func (p *Player) LoggedIn() bool {
+	return p.session != nil
 }
 
 func (p *Player) Play() {
@@ -296,12 +308,5 @@ func (p *Player) Status() {
 }
 
 func (p *Player) OutStream() <-chan []byte {
-	return p.downloadedTracks
-}
-func (p *Player) errorManager() {
-	for err := range p.errChan {
-		if err != nil {
-			log.Error().Err(err).Msg("")
-		}
-	}
+	return nil
 }
