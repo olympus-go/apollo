@@ -4,6 +4,10 @@ github.com/coreos/go-systemd/v22 v22.3.3-0.20220203105225-a9a7ef127534/go.mod h1
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/eolso/librespot-golang v0.0.0-20220816065617-45d017639935 h1:IbGG+81qX4i9PEEncMJWqVx9k70zm+1ExrGBb2dapQI=
 github.com/eolso/librespot-golang v0.0.0-20220816065617-45d017639935/go.mod h1:tQn+MW5387/vGKP7hHQfu4WPgtW0zDr5DaoxHUcijy0=
+github.com/eolso/librespot-golang v0.0.0-20220829192405-0cf0e2c6440f h1:3A5lCYk03i2v4GwGIWW3bmTZO8+xCfblqag5jqLPd7k=
+github.com/eolso/librespot-golang v0.0.0-20220829192405-0cf0e2c6440f/go.mod h1:f/TmLHDRYQPGjyEIhjsoBswDSk6agSQV+8lHpsSiwzE=
+github.com/eolso/threadsafe v0.0.0-20220829013830-ed75b700e204 h1:yWwxuhZrECMkUiP8Tn4dG+5/SfaJkNKOIVRlkkGs+bo=
+github.com/eolso/threadsafe v0.0.0-20220829013830-ed75b700e204/go.mod h1:HpJ24F8Kml/x9BUn2WDO6VJHu1JMHoxpGb6BgzOTcTI=
 github.com/godbus/dbus/v5 v5.0.4/go.mod h1:xhWf0FNVPg57R7Z0UbKHbJfkEywrmjJnf7w5xrFpKfA=
 github.com/golang/protobuf v1.5.0 h1:LUVKkCeviFUMKqHa4tXIIij/lbhnMbP7Fn5wKdKkRh4=
 github.com/golang/protobuf v1.5.0/go.mod h1:FsONVRAS9T7sI+LIUmWTfcYkHO4aIWwzhcaSAoJOfIk=

@@ -3,12 +3,13 @@ module github.com/olympus-go/apollo
 go 1.19
 
 require (
-	github.com/eolso/librespot-golang v0.0.0-20220816065617-45d017639935
+	github.com/eolso/librespot-golang v0.0.0-20220829192405-0cf0e2c6440f
 	github.com/rs/zerolog v1.27.0
 )
 
 require (
 	github.com/badfortrains/mdns v0.0.0-20160325001438-447166384f51 // indirect
+	github.com/eolso/threadsafe v0.0.0-20220829013830-ed75b700e204 // indirect
 	github.com/golang/protobuf v1.5.0 // indirect
 	github.com/mattn/go-colorable v0.1.12 // indirect
 	github.com/mattn/go-isatty v0.0.14 // indirect
