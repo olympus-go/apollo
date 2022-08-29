@@ -16,6 +16,10 @@ var targetCodecs = []Spotify.AudioFile_Format{
 	Spotify.AudioFile_OGG_VORBIS_320,
 	Spotify.AudioFile_OGG_VORBIS_160,
 	Spotify.AudioFile_OGG_VORBIS_96,
+	Spotify.AudioFile_MP3_256,
+	Spotify.AudioFile_MP3_320,
+	Spotify.AudioFile_MP3_160,
+	Spotify.AudioFile_MP3_96,
 }
 
 type Player struct {
