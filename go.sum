@@ -6,6 +6,8 @@ github.com/eolso/librespot-golang v0.0.0-20220816065617-45d017639935 h1:IbGG+81q
 github.com/eolso/librespot-golang v0.0.0-20220816065617-45d017639935/go.mod h1:tQn+MW5387/vGKP7hHQfu4WPgtW0zDr5DaoxHUcijy0=
 github.com/eolso/librespot-golang v0.0.0-20220829192405-0cf0e2c6440f h1:3A5lCYk03i2v4GwGIWW3bmTZO8+xCfblqag5jqLPd7k=
 github.com/eolso/librespot-golang v0.0.0-20220829192405-0cf0e2c6440f/go.mod h1:f/TmLHDRYQPGjyEIhjsoBswDSk6agSQV+8lHpsSiwzE=
+github.com/eolso/librespot-golang v0.0.0-20220829202933-acc2f299640a h1:LOwfmjn3IIBKnFz3l9FpJkXgtHsXiLx5mL7gb1Ans1k=
+github.com/eolso/librespot-golang v0.0.0-20220829202933-acc2f299640a/go.mod h1:f/TmLHDRYQPGjyEIhjsoBswDSk6agSQV+8lHpsSiwzE=
 github.com/eolso/threadsafe v0.0.0-20220829013830-ed75b700e204 h1:yWwxuhZrECMkUiP8Tn4dG+5/SfaJkNKOIVRlkkGs+bo=
 github.com/eolso/threadsafe v0.0.0-20220829013830-ed75b700e204/go.mod h1:HpJ24F8Kml/x9BUn2WDO6VJHu1JMHoxpGb6BgzOTcTI=
 github.com/godbus/dbus/v5 v5.0.4/go.mod h1:xhWf0FNVPg57R7Z0UbKHbJfkEywrmjJnf7w5xrFpKfA=
