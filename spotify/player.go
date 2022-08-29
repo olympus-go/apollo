@@ -264,6 +264,13 @@ func (p *Player) QueueTrack(track Track) {
 
 func (p *Player) DownloadTrack(track Track) (io.Reader, error) {
 	var selectedFile *Spotify.AudioFile
+
+	audioFiles := track.spotifyTrack.GetFile()
+	if len(audioFiles) == 0 {
+		return nil, fmt.Errorf("failed to fetch track data %s", track.Id())
+	}
+
+	// Try and grab a desired codec first
 	for _, file := range track.spotifyTrack.GetFile() {
 		for _, codec := range targetCodecs {
 			if file.GetFormat() == codec {
@@ -275,8 +282,10 @@ func (p *Player) DownloadTrack(track Track) (io.Reader, error) {
 			break
 		}
 	}
+
+	// Grab whatever is left
 	if selectedFile == nil {
-		return nil, fmt.Errorf("failed to fetch track data %s", track.Id())
+		selectedFile = audioFiles[0]
 	}
 
 	return p.session.Player().LoadTrack(selectedFile, track.spotifyTrack.GetGid())
