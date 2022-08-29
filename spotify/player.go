@@ -266,6 +266,18 @@ func (p *Player) DownloadTrack(track Track) (io.Reader, error) {
 	var selectedFile *Spotify.AudioFile
 
 	audioFiles := track.spotifyTrack.GetFile()
+
+	// If the track returned no audio files, try the alternatives until files are found
+	if len(audioFiles) == 0 {
+		for _, alternative := range track.spotifyTrack.Alternative {
+			audioFiles = alternative.GetFile()
+			if len(audioFiles) > 0 {
+				break
+			}
+		}
+	}
+
+	// All alternatives tried, still no files
 	if len(audioFiles) == 0 {
 		return nil, fmt.Errorf("failed to fetch track data %s", track.Id())
 	}
