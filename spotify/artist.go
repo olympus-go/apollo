@@ -3,12 +3,14 @@ package spotify
 import (
 	"encoding/hex"
 	"fmt"
+
 	"github.com/eolso/librespot-golang/Spotify"
 	"github.com/eolso/librespot-golang/librespot/utils"
 )
 
 type Artist struct {
 	spotifyArtist *Spotify.Artist
+	session       *Session
 }
 
 func (a Artist) Id() string {
@@ -35,7 +37,7 @@ func (a Artist) Image() string {
 	return ""
 }
 
-func (a Artist) TopTracks() []string {
+func (a Artist) TopTrackIds() []string {
 	topTracks := a.spotifyArtist.GetTopTrack()
 	if len(topTracks) == 0 {
 		return nil
@@ -47,4 +49,20 @@ func (a Artist) TopTracks() []string {
 	}
 
 	return ids
+}
+
+func (a Artist) TopTracks() ([]Track, error) {
+	trackIds := a.TopTrackIds()
+
+	tracks := make([]Track, 0, len(trackIds))
+	for _, trackId := range trackIds {
+		track, err := a.session.GetTrackById(trackId)
+		if err != nil {
+			return nil, err
+		}
+
+		tracks = append(tracks, track)
+	}
+
+	return tracks, nil
 }
