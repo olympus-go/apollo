@@ -1,12 +1,13 @@
 package apollo
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"time"
 )
 
@@ -23,21 +24,83 @@ type Playable interface {
 
 // LocalFile implements the Playable interface for a file local to the filesystem.
 type LocalFile struct {
-	name  string
-	path  string
-	Mdata map[string]string
+	name        string
+	artist      string
+	album       string
+	description string
+	Mdata       map[string]string
+	path        string
+	duration    time.Duration
+}
+
+type ffprobeFormat struct {
+	Format struct {
+		Filename string `json:"filename"`
+		Duration string `json:"duration"`
+		Tags     struct {
+			Title  string `json:"title"`
+			Artist string `json:"artist"`
+			Album  string `json:"album"`
+		} `json:"tags"`
+	} `json:"format"`
 }
 
 func NewLocalFile(path string) (LocalFile, error) {
-	if _, err := os.Stat(path); err != nil {
+	var err error
+	if _, err = os.Stat(path); err != nil {
 		return LocalFile{}, err
 	}
-	name := filepath.Base(path)
 
-	return LocalFile{
-		name: name,
-		path: path,
-	}, nil
+	l := LocalFile{
+		name:        filepath.Base(path),
+		artist:      "local",
+		album:       "local",
+		description: "local file",
+		path:        path,
+	}
+
+	args := []string{
+		"-i",
+		path,
+		"-v",
+		"quiet",
+		"-show_format",
+		"-print_format",
+		"json=compact=1",
+	}
+
+	var out bytes.Buffer
+	cmd := exec.Command("ffprobe", args...)
+	cmd.Stdout = &out
+	if err = cmd.Run(); err != nil {
+		l.duration = 69 * time.Minute
+		return l, nil
+	}
+
+	var format ffprobeFormat
+	if err = json.Unmarshal(out.Bytes(), &format); err != nil {
+		l.duration = 69 * time.Minute
+		return l, nil
+	}
+
+	if format.Format.Tags.Title != "" {
+		l.name = format.Format.Tags.Title
+	}
+	if format.Format.Tags.Artist != "" {
+		l.artist = format.Format.Tags.Artist
+	}
+	if format.Format.Tags.Album != "" {
+		l.album = format.Format.Tags.Album
+	}
+	if format.Format.Duration != "" {
+		l.duration, err = time.ParseDuration(fmt.Sprintf("%ss", format.Format.Duration))
+		if err != nil {
+			l.duration = 69 * time.Minute
+			return l, nil
+		}
+	}
+
+	return l, nil
 }
 
 func (l LocalFile) Name() string {
@@ -45,11 +108,11 @@ func (l LocalFile) Name() string {
 }
 
 func (l LocalFile) Artist() string {
-	return "local"
+	return l.artist
 }
 
 func (l LocalFile) Album() string {
-	return "local"
+	return l.album
 }
 
 func (l LocalFile) Metadata() map[string]string {
@@ -57,34 +120,11 @@ func (l LocalFile) Metadata() map[string]string {
 }
 
 func (l LocalFile) Duration() time.Duration {
-	args := []string{
-		"-i",
-		l.path,
-		"-show_entries",
-		"format=duration",
-		"-v",
-		"quiet",
-		"-of",
-		"csv=p=0",
-	}
-
-	var out strings.Builder
-	cmd := exec.Command("ffprobe", args...)
-	cmd.Stdout = &out
-	if err := cmd.Run(); err != nil {
-		return 69 * time.Minute
-	}
-
-	dur, err := time.ParseDuration(fmt.Sprintf("%ss", strings.TrimSpace(out.String())))
-	if err != nil {
-		return 69 * time.Minute
-	}
-
-	return dur
+	return l.duration
 }
 
 func (l LocalFile) Description() string {
-	return "local file " + l.name
+	return l.description
 }
 
 func (l LocalFile) Type() string {
