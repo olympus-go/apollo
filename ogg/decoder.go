@@ -11,12 +11,17 @@ type Decoder struct {
 	lastSegment int
 }
 
-func NewDecoder(r io.Reader) *Decoder {
+func NewDecoder() *Decoder {
 	return &Decoder{
-		r:           r,
+		//r:           r,
 		currentPage: nil,
 		lastSegment: 0,
 	}
+}
+
+func (d *Decoder) Open(r io.Reader) error {
+	d.r = r
+	return nil
 }
 
 // Next returns the next packet of the stream. Returns io.EOF if all packets have already been read.
@@ -113,4 +118,11 @@ func (d *Decoder) ReadAll() ([][]byte, error) {
 
 		all = append(all, packet)
 	}
+}
+
+func (d *Decoder) Close() error {
+	d.r = nil
+	d.currentPage = nil
+	d.lastSegment = 0
+	return nil
 }

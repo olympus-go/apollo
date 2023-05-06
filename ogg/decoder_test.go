@@ -28,7 +28,8 @@ func TestDecoder_Read(t *testing.T) {
 
 	for name, tst := range tests {
 		t.Run(name, func(t *testing.T) {
-			d := ogg.NewDecoder(tst.r)
+			d := ogg.NewDecoder()
+			_ = d.Open(tst.r)
 			_, err := d.Read(tst.buf)
 
 			if tst.err != err {
@@ -60,7 +61,8 @@ func BenchmarkDecoder_Read(b *testing.B) {
 	}
 
 	for name, tst := range tests {
-		d := ogg.NewDecoder(tst.r)
+		d := ogg.NewDecoder()
+		_ = d.Open(tst.r)
 
 		b.Run(name, func(b *testing.B) {
 			for i := 0; i < b.N; i++ {
@@ -86,7 +88,9 @@ func BenchmarkDecoder_Next(b *testing.B) {
 
 	for name, test := range tests {
 		r := genOgg(test, 1024)
-		d := ogg.NewDecoder(r)
+		d := ogg.NewDecoder()
+		_ = d.Open(r)
+
 		b.Run(name, func(b *testing.B) {
 			for i := 0; i < b.N; i++ {
 				for {
@@ -118,9 +122,10 @@ func TestDecoder_ReadAll(t *testing.T) {
 
 	for name, tst := range tests {
 		t.Run(name, func(t *testing.T) {
-			d := ogg.NewDecoder(tst.r)
-			_, err := d.ReadAll()
+			d := ogg.NewDecoder()
+			_ = d.Open(tst.r)
 
+			_, err := d.ReadAll()
 			if tst.err != err {
 				if tst.err == nil {
 					tst.err = errors.New("nil")
