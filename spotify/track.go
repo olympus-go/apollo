@@ -16,11 +16,11 @@ type Track struct {
 	player       *player.Player
 }
 
-func (t *Track) Name() string {
+func (t Track) Name() string {
 	return t.spotifyTrack.GetName()
 }
 
-func (t *Track) Artist() string {
+func (t Track) Artist() string {
 	if len(t.spotifyTrack.Artist) == 0 {
 		return "Unknown"
 	}
@@ -28,19 +28,19 @@ func (t *Track) Artist() string {
 	return t.spotifyTrack.Artist[0].GetName()
 }
 
-func (t *Track) Metadata() map[string]string {
+func (t Track) Metadata() map[string]string {
 	return nil
 }
 
-func (t *Track) Id() string {
+func (t Track) Id() string {
 	return utils.ConvertTo62(t.spotifyTrack.GetGid())
 }
 
-func (t *Track) Description() string {
+func (t Track) Description() string {
 	return fmt.Sprintf("%s by %s", t.Name(), t.Artist())
 }
 
-func (t *Track) Album() string {
+func (t Track) Album() string {
 	if t.spotifyTrack.Album == nil {
 		return "Unknown"
 	}
@@ -48,7 +48,7 @@ func (t *Track) Album() string {
 	return t.spotifyTrack.GetAlbum().GetName()
 }
 
-func (t *Track) Image() string {
+func (t Track) Image() string {
 	image := t.spotifyTrack.GetAlbum().GetCoverGroup().GetImage()
 	if len(image) > 0 {
 		return fmt.Sprintf("https://i.scdn.co/image/%032s", hex.EncodeToString(image[0].GetFileId()))
@@ -56,15 +56,15 @@ func (t *Track) Image() string {
 	return ""
 }
 
-func (t *Track) Duration() time.Duration {
+func (t Track) Duration() time.Duration {
 	return time.Duration(t.spotifyTrack.GetDuration()) * time.Millisecond
 }
 
-func (t *Track) Type() string {
+func (t Track) Type() string {
 	return "spotify track"
 }
 
-func (t *Track) Download() (io.ReadCloser, error) {
+func (t Track) Download() (io.ReadCloser, error) {
 	var selectedFile *Spotify.AudioFile
 
 	audioFiles := t.spotifyTrack.GetFile()
