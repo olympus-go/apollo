@@ -12,4 +12,7 @@ type PlayerConfig struct {
 	// TargetAudioFormat sets the target audio format when the default ffmpeg transcoder is used. This is ignored if
 	// a custom transcoder is supplied.
 	TargetAudioFormat string
+
+	// PacketBuffer sets the size of the byte buffer used to read packets from enqueued Playable
+	PacketBuffer int `json:"packet_buffer"`
 }

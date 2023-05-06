@@ -2,9 +2,9 @@ package apollo
 
 import (
 	"context"
+	"io"
 
 	"github.com/eolso/threadsafe"
-	"github.com/olympus-go/apollo/ffmpeg"
 	"github.com/rs/zerolog"
 )
 
@@ -28,15 +28,20 @@ const (
 )
 
 type Player struct {
-	config       PlayerConfig
-	transcoder   Transcoder
-	cursor       int
-	queue        threadsafe.Slice[Playable]
+	config PlayerConfig
+	codec  Codec
+
+	cursor int
+	queue  threadsafe.Slice[Playable]
+
 	currentState PlayerState
 	stateChan    chan PlayerState
-	outChan      chan []byte
-	bytesSent    int
-	logger       zerolog.Logger
+
+	outChan    chan []byte
+	bytesSent  int
+	playCancel context.CancelFunc
+
+	logger zerolog.Logger
 }
 
 // NewPlayer creates a new player instance and starts listening for events. If no logging is desired, a zerolog.Nop()
@@ -44,7 +49,7 @@ type Player struct {
 func NewPlayer(ctx context.Context, config PlayerConfig, log zerolog.Logger) *Player {
 	p := Player{
 		config:       config,
-		transcoder:   ffmpeg.NewTranscoder(),
+		codec:        &NopCodec{},
 		cursor:       0,
 		currentState: IdleState,
 		stateChan:    make(chan PlayerState),
@@ -55,6 +60,11 @@ func NewPlayer(ctx context.Context, config PlayerConfig, log zerolog.Logger) *Pl
 	go p.stateListener(ctx)
 
 	return &p
+}
+
+func (p *Player) WithCodec(c Codec) *Player {
+	p.codec = c
+	return p
 }
 
 func (p *Player) Play() {
@@ -118,8 +128,9 @@ func (p *Player) List(all bool) []Playable {
 
 func (p *Player) Empty() {
 	p.queue.Empty()
-	p.transcoder.Cancel()
-	p.Next()
+	if p.playCancel != nil {
+		p.playCancel()
+	}
 }
 
 func (p *Player) NowPlaying() (Playable, bool) {
@@ -130,6 +141,10 @@ func (p *Player) NowPlaying() (Playable, bool) {
 	return nil, false
 }
 
+func (p *Player) Cursor() int {
+	return p.cursor
+}
+
 func (p *Player) State() PlayerState {
 	return p.currentState
 }
@@ -138,11 +153,13 @@ func (p *Player) Out() <-chan []byte {
 	return p.outChan
 }
 
-// TODO the player should probably track time itself, but this will be a quicker win.
 func (p *Player) BytesSent() int {
+	// TODO the player should probably track time itself, but this will be a quicker win.
 	return p.bytesSent
 }
 
+// stateListener handles all the state change requests. This routine also launches the playable listener and establishes
+// a channel to communicate with it.
 func (p *Player) stateListener(ctx context.Context) {
 	logger := p.logger.With().Str("goroutine", "stateListener()").Logger()
 	processChan, playChan := p.playableListener(ctx)
@@ -209,9 +226,15 @@ func (p *Player) playableListener(ctx context.Context) (chan<- PlayerState, chan
 	playChan := make(chan Playable)
 
 	go func() {
+		var playerCtx context.Context
+		buf := make([]byte, p.config.PacketBuffer)
+
 		for {
+			playerCtx, p.playCancel = context.WithCancel(ctx)
+
 			select {
 			case <-ctx.Done():
+				p.playCancel()
 				return
 			case s := <-stateChan:
 				// Nothing to do if not currently playing, but we don't want to have the channel backed up when idle
@@ -232,19 +255,20 @@ func (p *Player) playableListener(ctx context.Context) (chan<- PlayerState, chan
 					continue
 				}
 
-				if err = p.transcoder.Start(r); err != nil {
+				err = p.codec.Open(r)
+				if err != nil {
 					logger.Error().
 						Err(err).
 						Interface("playable", nameArtistAlbumType(playable)).
-						Msgf("failed to start transcoder for %s", playable.Type())
+						Msgf("failed to open %s", playable.Type())
 					continue
 				}
 
-				playerCtx, playerCancel := context.WithCancel(ctx)
 				func() {
-					for b := range p.transcoder.OutBytes() {
+					for {
 						select {
 						case <-playerCtx.Done():
+							logger.Debug().Msg("player context closed")
 							return
 						case state := <-stateChan:
 							switch state {
@@ -258,7 +282,10 @@ func (p *Player) playableListener(ctx context.Context) (chan<- PlayerState, chan
 											logger.Debug().
 												Interface("playable", nameArtistAlbumType(playable)).
 												Msgf("skipping %s", playable.Type())
-											playerCancel()
+											// In the case of a PlayState being received, we just need to stop blocking
+											// here. But when a NextState is received, we need to stop blocking and
+											// signal parent loop to cancel.
+											p.playCancel()
 											return
 										}
 									}
@@ -270,25 +297,43 @@ func (p *Player) playableListener(ctx context.Context) (chan<- PlayerState, chan
 								return
 							}
 						default:
-							p.outChan <- b
-							p.bytesSent++
+							n, err := p.codec.Read(buf)
+							if err != nil && err == io.EOF {
+								logger.Info().
+									Interface("playable", nameArtistAlbumType(playable)).
+									Msgf("finished playing %s", playable.Type())
+								return
+							} else if err != nil {
+								logger.Error().
+									Err(err).
+									Interface("playable", nameArtistAlbumType(playable)).
+									Msgf("error reading %s", playable.Type())
+								return
+							}
+
+							out := make([]byte, n)
+							copy(out, buf[:n])
+
+							select {
+							case <-playerCtx.Done():
+								return
+							case p.outChan <- out:
+								p.bytesSent++
+							}
 						}
 					}
-
-					if err, ok := <-p.transcoder.Errors(); ok && err != nil {
-						logger.Error().
-							Err(err).
-							Interface("playable", nameArtistAlbumType(playable)).
-							Msgf("error while transcoding %s", playable.Type())
-						return
-					}
-
-					logger.Info().
-						Interface("playable", nameArtistAlbumType(playable)).
-						Msgf("finished playing %s", playable.Type())
 				}()
 
-				p.transcoder.Cancel()
+				if err = p.codec.Close(); err != nil {
+					logger.Error().Err(err).Msg("failed closing codec")
+				}
+
+				if err = r.Close(); err != nil {
+					logger.Error().
+						Err(err).
+						Interface("playable", nameArtistAlbumType(playable)).
+						Msgf("failed closing %s", playable.Type())
+				}
 
 				// Attempt to play the next in queue
 				p.currentState = IdleState
