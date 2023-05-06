@@ -16,6 +16,7 @@ type Options struct {
 	Output           string // Output stream to write to
 	Channels         string // Number of audio channels (-ac)
 	Bitrate          string // Bitrate (-b:a)
+	Quality          string // Quality of bitrate conversion 0-9 (-q:a)
 	FrameRate        string // Audio sampling rate (-ar)
 	StartTime        string // Time after 0 to start at in seconds (-ss)
 	CompressionLevel string // Compression level between 0 and 10 (-compression_level)
@@ -44,6 +45,10 @@ func (o Options) Args() []string {
 
 	if o.Bitrate != "" {
 		args = append(args, "-b:a", o.Bitrate)
+	}
+
+	if o.Quality != "" {
+		args = append(args, "-q:a", o.Quality)
 	}
 
 	if o.FrameRate != "" {
