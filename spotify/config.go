@@ -4,8 +4,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-
-	"github.com/rs/zerolog/log"
 )
 
 type SessionConfig struct {
@@ -43,7 +41,6 @@ func DefaultSessionConfig() SessionConfig {
 
 	if configHomeDir == "" {
 		configHomeDir = filepath.Join(".", ".apollo", "spotify")
-		log.Warn().Msg("could not parse home directory for cache, using ./ instead")
 	}
 
 	return SessionConfig{

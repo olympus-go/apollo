@@ -1,6 +1,7 @@
 package spotify
 
 import (
+	"log/slog"
 	"os"
 	"path/filepath"
 
@@ -8,7 +9,6 @@ import (
 	"github.com/eolso/librespot-golang/librespot"
 	"github.com/eolso/librespot-golang/librespot/core"
 	"github.com/eolso/librespot-golang/librespot/utils"
-	"github.com/rs/zerolog/log"
 )
 
 // targetCodecs sets the order priority of codecs to fetch. TODO enable setting this.
@@ -34,19 +34,25 @@ var targetCodecs = []Spotify.AudioFile_Format{
 type Session struct {
 	config SessionConfig
 	client *core.Session
+	logger *slog.Logger
 }
 
-func NewSession(config SessionConfig) *Session {
+func NewSession(config SessionConfig, h slog.Handler) *Session {
+	if h == nil {
+		h = nopLogHandler{}
+	}
+
 	session := Session{
 		config: config,
+		logger: slog.New(h),
 	}
 
 	if config.ConfigHomeDir != "" {
 		if err := os.MkdirAll(config.ConfigHomeDir, 0755); err != nil {
-			log.Warn().Err(err).Msg("failed to create config home directory")
+			session.logger.Error("failed to create config home directory", slog.String("error", err.Error()))
 		}
 		if err := os.MkdirAll(config.CacheDir, 0755); err != nil {
-			log.Warn().Err(err).Msg("failed to create song cache directory")
+			session.logger.Error("failed to create song cache directory", slog.String("error", err.Error()))
 		}
 	}
 
@@ -80,7 +86,7 @@ func (s *Session) LoginWithToken(deviceName string, token string) error {
 	if s.config.ConfigHomeDir != "" {
 		err = os.WriteFile(filepath.Join(s.config.ConfigHomeDir, "auth.token"), s.client.ReusableAuthBlob(), 0600)
 		if err != nil {
-			log.Warn().Err(err).Msg("failed to write auth token to filesystem")
+			s.logger.Error("failed to write auth token to filesystem", slog.String("error", err.Error()))
 		}
 	}
 

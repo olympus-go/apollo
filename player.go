@@ -3,9 +3,9 @@ package apollo
 import (
 	"context"
 	"io"
+	"log/slog"
 
 	"github.com/eolso/threadsafe"
-	"github.com/rs/zerolog"
 )
 
 type PlayerState int
@@ -41,12 +41,16 @@ type Player struct {
 	bytesSent  int
 	playCancel context.CancelFunc
 
-	logger zerolog.Logger
+	logger *slog.Logger
 }
 
-// NewPlayer creates a new player instance and starts listening for events. If no logging is desired, a zerolog.Nop()
-// should be used.
-func NewPlayer(ctx context.Context, config PlayerConfig, log zerolog.Logger) *Player {
+// NewPlayer creates a new player instance and starts listening for events. If no logging is desired, nil can be passed
+// in for h.
+func NewPlayer(config PlayerConfig, h slog.Handler) *Player {
+	if h == nil {
+		h = nopLogHandler{}
+	}
+
 	p := Player{
 		config:       config,
 		codec:        &NopCodec{},
@@ -54,10 +58,10 @@ func NewPlayer(ctx context.Context, config PlayerConfig, log zerolog.Logger) *Pl
 		currentState: IdleState,
 		stateChan:    make(chan PlayerState),
 		outChan:      make(chan []byte),
-		logger:       log.With().Str("package", "apollo").Logger(),
+		logger:       slog.New(h),
 	}
 
-	go p.stateListener(ctx)
+	go p.stateListener()
 
 	return &p
 }
@@ -81,9 +85,7 @@ func (p *Player) Pause() {
 
 func (p *Player) Enqueue(playable Playable) {
 	p.queue.Append(playable)
-	p.logger.Info().
-		Interface("playable", nameArtistAlbumType(playable)).
-		Msgf("enqueued %s", playable.Type())
+	p.logger.Info("enqueued "+playable.Type(), slog.Any("playable", nameArtistAlbumType(playable)))
 }
 
 func (p *Player) Next() {
@@ -160,20 +162,20 @@ func (p *Player) BytesSent() int {
 
 // stateListener handles all the state change requests. This routine also launches the playable listener and establishes
 // a channel to communicate with it.
-func (p *Player) stateListener(ctx context.Context) {
-	logger := p.logger.With().Str("goroutine", "stateListener()").Logger()
-	processChan, playChan := p.playableListener(ctx)
+func (p *Player) stateListener() {
+	logger := p.logger.With(slog.String("goroutine", "stateListener()"))
+	processChan, playChan := p.playableListener()
 
 	for {
 		select {
-		case <-ctx.Done():
-			return
 		case state := <-p.stateChan:
-			logger.Debug().
-				Str("current", p.currentState.String()).
-				Str("requested", state.String()).
-				Msg("received request for state change")
+			logger.Debug("received request for state change",
+				slog.String("current", p.currentState.String()),
+				slog.String("requested", state.String()),
+			)
+
 			switch state {
+			case IdleState:
 			case PlayState:
 				if p.currentState == IdleState {
 					if playable, ok := p.queue.SafeGet(p.cursor); ok {
@@ -220,8 +222,8 @@ func (p *Player) stateListener(ctx context.Context) {
 	}
 }
 
-func (p *Player) playableListener(ctx context.Context) (chan<- PlayerState, chan<- Playable) {
-	logger := p.logger.With().Str("goroutine", "playableListener()").Logger()
+func (p *Player) playableListener() (chan<- PlayerState, chan<- Playable) {
+	logger := p.logger.With(slog.String("goroutine", "playableListener()"))
 	stateChan := make(chan PlayerState)
 	playChan := make(chan Playable)
 
@@ -230,37 +232,32 @@ func (p *Player) playableListener(ctx context.Context) (chan<- PlayerState, chan
 		buf := make([]byte, p.config.PacketBuffer)
 
 		for {
-			playerCtx, p.playCancel = context.WithCancel(ctx)
+			playerCtx, p.playCancel = context.WithCancel(context.Background())
 
 			select {
-			case <-ctx.Done():
-				p.playCancel()
-				return
 			case s := <-stateChan:
 				// Nothing to do if not currently playing, but we don't want to have the channel backed up when idle
-				logger.Debug().Str("requested", s.String()).Msg("discarded state change request")
+				logger.Debug("discarded state change request", slog.String("requested", s.String()))
 			case playable := <-playChan:
 				p.bytesSent = 0
 
-				logger.Info().
-					Interface("playable", nameArtistAlbumType(playable)).
-					Msgf("downloading %s", playable.Type())
+				logger.Info("downloading "+playable.Type(), slog.Any("playable", nameArtistAlbumType(playable)))
 
 				r, err := playable.Download()
 				if err != nil {
-					logger.Error().
-						Err(err).
-						Interface("playable", nameArtistAlbumType(playable)).
-						Msgf("failed to download %s", playable.Type())
+					logger.Error("failed to download as "+playable.Type(),
+						slog.String("error", err.Error()),
+						slog.Any("playable", nameArtistAlbumType(playable)),
+					)
 					continue
 				}
 
 				err = p.codec.Open(r)
 				if err != nil {
-					logger.Error().
-						Err(err).
-						Interface("playable", nameArtistAlbumType(playable)).
-						Msgf("failed to open %s", playable.Type())
+					slog.Error("failed to open as "+playable.Type(),
+						slog.String("error", err.Error()),
+						slog.Any("playable", nameArtistAlbumType(playable)),
+					)
 					continue
 				}
 
@@ -268,7 +265,7 @@ func (p *Player) playableListener(ctx context.Context) (chan<- PlayerState, chan
 					for {
 						select {
 						case <-playerCtx.Done():
-							logger.Debug().Msg("player context closed")
+							logger.Debug("player context closed")
 							return
 						case state := <-stateChan:
 							switch state {
@@ -279,9 +276,9 @@ func (p *Player) playableListener(ctx context.Context) (chan<- PlayerState, chan
 										if s == PlayState {
 											return
 										} else if s == NextState {
-											logger.Debug().
-												Interface("playable", nameArtistAlbumType(playable)).
-												Msgf("skipping %s", playable.Type())
+											logger.Debug("skipping "+playable.Type(),
+												slog.Any("playable", nameArtistAlbumType(playable)),
+											)
 											// In the case of a PlayState being received, we just need to stop blocking
 											// here. But when a NextState is received, we need to stop blocking and
 											// signal parent loop to cancel.
@@ -291,23 +288,23 @@ func (p *Player) playableListener(ctx context.Context) (chan<- PlayerState, chan
 									}
 								}()
 							case NextState:
-								logger.Debug().
-									Interface("playable", nameArtistAlbumType(playable)).
-									Msgf("skipping %s", playable.Type())
+								logger.Debug("skipping "+playable.Type(),
+									slog.Any("playable", nameArtistAlbumType(playable)),
+								)
 								return
 							}
 						default:
 							n, err := p.codec.Read(buf)
 							if err != nil && err == io.EOF {
-								logger.Info().
-									Interface("playable", nameArtistAlbumType(playable)).
-									Msgf("finished playing %s", playable.Type())
+								logger.Info("finished playing "+playable.Type(),
+									slog.Any("playable", nameArtistAlbumType(playable)),
+								)
 								return
 							} else if err != nil {
-								logger.Error().
-									Err(err).
-									Interface("playable", nameArtistAlbumType(playable)).
-									Msgf("error reading %s", playable.Type())
+								slog.Error("error reading "+playable.Type(),
+									slog.String("error", err.Error()),
+									slog.Any("playable", nameArtistAlbumType(playable)),
+								)
 								return
 							}
 
@@ -325,14 +322,14 @@ func (p *Player) playableListener(ctx context.Context) (chan<- PlayerState, chan
 				}()
 
 				if err = p.codec.Close(); err != nil {
-					logger.Error().Err(err).Msg("failed closing codec")
+					logger.Error("failed closing codec", slog.String("error", err.Error()))
 				}
 
 				if err = r.Close(); err != nil {
-					logger.Error().
-						Err(err).
-						Interface("playable", nameArtistAlbumType(playable)).
-						Msgf("failed closing %s", playable.Type())
+					logger.Error("failed closing "+playable.Type(),
+						slog.String("error", err.Error()),
+						slog.Any("playable", nameArtistAlbumType(playable)),
+					)
 				}
 
 				// Attempt to play the next in queue
