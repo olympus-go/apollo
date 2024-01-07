@@ -100,6 +100,12 @@ func (p *Player) Previous() {
 	}()
 }
 
+// Get returns the Playable at position i. Returns nil when i is invalid.
+func (p *Player) Get(i int) Playable {
+	pl, _ := p.queue.SafeGet(i)
+	return pl
+}
+
 func (p *Player) Insert(i int, playable Playable) {
 	if i < 0 {
 		return

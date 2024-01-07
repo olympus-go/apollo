@@ -5,6 +5,8 @@ github.com/eolso/librespot-golang v0.0.0-20230506023304-cdb078f4ea7f h1:JFuBM9Ut
 github.com/eolso/librespot-golang v0.0.0-20230506023304-cdb078f4ea7f/go.mod h1:ZMdmntH4Ph3WzSmazGIs2XLN8OVfJeCbKT/ZFSn8Pa0=
 github.com/eolso/threadsafe v0.0.0-20230304165831-d28da4e4d0d3 h1:GHaXZmcRxj3dUR9KLvI2wp73giddMtua29jXCFtfdY8=
 github.com/eolso/threadsafe v0.0.0-20230304165831-d28da4e4d0d3/go.mod h1:RTB7Uo8r+9gpIcLXvsuRAv+pgabBfpuBqAooOvOGhSQ=
+github.com/eolso/threadsafe v0.0.0-20240107200101-12eeebc6f1dc h1:mvmeZFqAMFRqLp0ZhS58mvD5b6KsNJ2DsKwFEfy6kcw=
+github.com/eolso/threadsafe v0.0.0-20240107200101-12eeebc6f1dc/go.mod h1:RTB7Uo8r+9gpIcLXvsuRAv+pgabBfpuBqAooOvOGhSQ=
 github.com/golang/protobuf v1.5.0 h1:LUVKkCeviFUMKqHa4tXIIij/lbhnMbP7Fn5wKdKkRh4=
 github.com/golang/protobuf v1.5.0/go.mod h1:FsONVRAS9T7sI+LIUmWTfcYkHO4aIWwzhcaSAoJOfIk=
 github.com/google/go-cmp v0.5.5 h1:Khx7svrCpmxxtHBq5j2mp/xVjsi8hQMfNLvJFAlrGgU=
