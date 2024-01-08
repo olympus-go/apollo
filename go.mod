@@ -1,6 +1,6 @@
 module github.com/olympus-go/apollo
 
-go 1.20
+go 1.21
 
 require (
 	github.com/eolso/librespot-golang v0.0.0-20230506023304-cdb078f4ea7f
