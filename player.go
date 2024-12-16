@@ -4,6 +4,8 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"math/rand"
+	"time"
 
 	"github.com/eolso/threadsafe"
 )
@@ -32,7 +34,7 @@ type Player struct {
 	codec  Codec
 
 	cursor int
-	queue  threadsafe.Slice[Playable]
+	queue  *threadsafe.Slice[Playable]
 
 	currentState PlayerState
 	stateChan    chan PlayerState
@@ -55,6 +57,7 @@ func NewPlayer(config PlayerConfig, h slog.Handler) *Player {
 		config:       config,
 		codec:        &NopCodec{},
 		cursor:       0,
+		queue:        &threadsafe.Slice[Playable]{},
 		currentState: IdleState,
 		stateChan:    make(chan PlayerState),
 		outChan:      make(chan []byte),
@@ -135,10 +138,48 @@ func (p *Player) List(all bool) []Playable {
 }
 
 func (p *Player) Empty() {
-	p.queue.Empty()
 	if p.playCancel != nil {
 		p.playCancel()
 	}
+	p.queue.Empty()
+	p.cursor = 0
+	p.bytesSent = 0
+}
+
+func (p *Player) Shuffle(all bool) {
+	start := 0
+	end := p.queue.Len()
+
+	if !all {
+		start = p.cursor
+	}
+
+	shuffledQueue := threadsafe.Slice[Playable]{}
+
+	for i := start; i < p.queue.Len(); i++ {
+		shuffledQueue.Append(p.queue.Get(i))
+	}
+
+	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
+	rng.Shuffle(end-start, func(i, j int) {
+		shuffledQueue.Data[i], shuffledQueue.Data[j] = shuffledQueue.Data[j], shuffledQueue.Data[i]
+	})
+
+	newQueue := threadsafe.Slice[Playable]{}
+
+	for i := 0; i < start; i++ {
+		if !all {
+			newQueue.Append(p.queue.Get(i))
+		} else {
+			newQueue.Append(shuffledQueue.Get(i))
+		}
+	}
+
+	for i := start; i < end; i++ {
+		newQueue.Append(shuffledQueue.Get(i - start))
+	}
+
+	p.queue = &newQueue
 }
 
 func (p *Player) NowPlaying() (Playable, bool) {
@@ -182,6 +223,7 @@ func (p *Player) stateListener() {
 
 			switch state {
 			case IdleState:
+				p.currentState = IdleState
 			case PlayState:
 				if p.currentState == IdleState {
 					if playable, ok := p.queue.SafeGet(p.cursor); ok {
@@ -339,7 +381,7 @@ func (p *Player) playableListener() (chan<- PlayerState, chan<- Playable) {
 				}
 
 				// Attempt to play the next in queue
-				p.currentState = IdleState
+				p.idle()
 				p.Play()
 			}
 		}
@@ -360,4 +402,10 @@ func (p *Player) moveCursor(i int) {
 	}
 
 	p.cursor = tempCursor
+}
+
+func (p *Player) idle() {
+	go func() {
+		p.stateChan <- IdleState
+	}()
 }
