@@ -381,8 +381,8 @@ func (p *Player) playableListener() (chan<- PlayerState, chan<- Playable) {
 				}
 
 				// Attempt to play the next in queue
-				p.idle()
-				p.Play()
+				p.stateChan <- IdleState
+				p.stateChan <- PlayState
 			}
 		}
 	}()
