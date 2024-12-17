@@ -21,12 +21,13 @@ type Process struct {
 func Version() string {
 	var version string
 
-	if out, err := exec.Command("ffmpeg", "-version").Output(); err != nil {
+	out, err := exec.Command("ffmpeg", "-version").Output()
+	if err != nil {
 		return fmt.Sprintf("version unknown: %s", err)
-	} else {
-		if _, err = fmt.Sscanf(string(out), "ffmpeg version %s Copyright", &version); err != nil {
-			return fmt.Sprintf("could not parse version\n%s", string(out))
-		}
+	}
+
+	if _, err = fmt.Sscanf(string(out), "ffmpeg version %s Copyright", &version); err != nil {
+		return fmt.Sprintf("could not parse version\n%s", string(out))
 	}
 
 	return version

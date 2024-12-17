@@ -21,6 +21,7 @@ type Options struct {
 	StartTime        string // Time after 0 to start at in seconds (-ss)
 	CompressionLevel string // Compression level between 0 and 10 (-compression_level)
 	Threads          string // Number of threads to use (-threads)
+	Filter           string // Filter string to use (-filter:a)
 }
 
 func (o Options) Args() []string {
@@ -65,6 +66,10 @@ func (o Options) Args() []string {
 
 	if o.Threads != "" {
 		args = append(args, "-threads", o.Threads)
+	}
+
+	if o.Filter != "" {
+		args = append(args, "-filter:a", o.Filter)
 	}
 
 	args = append(args, o.Output)
