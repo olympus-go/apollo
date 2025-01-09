@@ -34,7 +34,7 @@ type Player struct {
 	codec  Codec
 
 	cursor int
-	queue  *threadsafe.Slice[Playable]
+	queue  *threadsafe.Slice[PlayableCodec]
 
 	currentState PlayerState
 	stateChan    chan PlayerState
@@ -44,6 +44,11 @@ type Player struct {
 	playCancel context.CancelFunc
 
 	logger *slog.Logger
+}
+
+type PlayableCodec struct {
+	playable Playable
+	codec    Codec
 }
 
 // NewPlayer creates a new player instance and starts listening for events. If no logging is desired, nil can be passed
@@ -57,7 +62,7 @@ func NewPlayer(config PlayerConfig, h slog.Handler) *Player {
 		config:       config,
 		codec:        &NopCodec{},
 		cursor:       0,
-		queue:        &threadsafe.Slice[Playable]{},
+		queue:        &threadsafe.Slice[PlayableCodec]{},
 		currentState: IdleState,
 		stateChan:    make(chan PlayerState),
 		outChan:      make(chan []byte),
@@ -69,9 +74,10 @@ func NewPlayer(config PlayerConfig, h slog.Handler) *Player {
 	return &p
 }
 
-func (p *Player) WithCodec(c Codec) *Player {
-	p.codec = c
-	return p
+func (p *Player) SetDefaultCodec(c Codec) {
+	if c != nil {
+		p.codec = c
+	}
 }
 
 func (p *Player) Play() {
@@ -87,7 +93,19 @@ func (p *Player) Pause() {
 }
 
 func (p *Player) Enqueue(playable Playable) {
-	p.queue.Append(playable)
+	p.EnqueueWithCodec(playable, p.codec)
+}
+
+func (p *Player) EnqueueWithCodec(playable Playable, codec Codec) {
+	if playable == nil {
+		return
+	}
+
+	if codec == nil {
+		codec = p.codec
+	}
+
+	p.queue.Append(PlayableCodec{playable: playable, codec: codec})
 	p.logger.Info("enqueued "+playable.Type(), slog.Any("playable", nameArtistAlbumType(playable)))
 }
 
@@ -105,19 +123,23 @@ func (p *Player) Previous() {
 
 // Get returns the Playable at position i. Returns nil when i is invalid.
 func (p *Player) Get(i int) Playable {
-	pl, _ := p.queue.SafeGet(i)
-	return pl
+	pc, _ := p.queue.SafeGet(i)
+	return pc.playable
 }
 
 func (p *Player) Insert(i int, playable Playable) {
+	p.InsertWithCodec(i, playable, p.codec)
+}
+
+func (p *Player) InsertWithCodec(i int, playable Playable, codec Codec) {
 	if i < 0 {
 		return
 	}
 
 	if i >= p.queue.Len() {
-		p.queue.Append(playable)
+		p.queue.Append(PlayableCodec{playable: playable, codec: codec})
 	} else {
-		p.queue.SafeInsert(i, playable)
+		p.queue.SafeInsert(i, PlayableCodec{playable: playable, codec: codec})
 	}
 }
 
@@ -130,19 +152,28 @@ func (p *Player) Remove(i int) {
 }
 
 func (p *Player) List(all bool) []Playable {
-	if all {
-		return p.queue.GetAll()
+	pcs := p.queue.GetAll()
+
+	playables := make([]Playable, 0, len(pcs))
+	for _, pc := range pcs {
+		playables = append(playables, pc.playable)
 	}
 
-	return p.queue.GetAll()[p.cursor:]
+	if all {
+		return playables
+	}
+
+	return playables[p.cursor:]
 }
 
 func (p *Player) Empty() {
+	p.queue.Empty()
+	p.cursor = 0
+
 	if p.playCancel != nil {
 		p.playCancel()
 	}
-	p.queue.Empty()
-	p.cursor = 0
+
 	p.bytesSent = 0
 }
 
@@ -154,7 +185,7 @@ func (p *Player) Shuffle(all bool) {
 		start = p.cursor
 	}
 
-	shuffledQueue := threadsafe.Slice[Playable]{}
+	shuffledQueue := threadsafe.Slice[PlayableCodec]{}
 
 	for i := start; i < p.queue.Len(); i++ {
 		shuffledQueue.Append(p.queue.Get(i))
@@ -165,7 +196,7 @@ func (p *Player) Shuffle(all bool) {
 		shuffledQueue.Data[i], shuffledQueue.Data[j] = shuffledQueue.Data[j], shuffledQueue.Data[i]
 	})
 
-	newQueue := threadsafe.Slice[Playable]{}
+	newQueue := threadsafe.Slice[PlayableCodec]{}
 
 	for i := 0; i < start; i++ {
 		if !all {
@@ -184,7 +215,9 @@ func (p *Player) Shuffle(all bool) {
 
 func (p *Player) NowPlaying() (Playable, bool) {
 	if p.currentState == PlayState || p.currentState == PauseState {
-		return p.queue.SafeGet(p.cursor - 1)
+		pc, ok := p.queue.SafeGet(p.cursor - 1)
+
+		return pc.playable, ok
 	}
 
 	return nil, false
@@ -244,36 +277,32 @@ func (p *Player) stateListener() {
 				if p.currentState == PlayState || p.currentState == PauseState {
 					p.currentState = NextState
 					processChan <- NextState
-					p.currentState = IdleState
-					p.Play()
 				}
 			case PreviousState:
 				if p.queue.Len() > 0 {
-					initialState := p.currentState
-					p.currentState = PreviousState
 					// Previous is the same as skipping in the sense that we need to cancel what is currently playing.
 					// The only difference is that we need to move the cursor back before resuming playback.
-					processChan <- NextState
+
 					// When at the end we only need to go back one (idle -> previous song). If we are currently playing
 					// or paused we need to go back two (playing -> beginning of song -> previous song).
-					if initialState == IdleState {
-						p.moveCursor(-1)
-					} else if initialState == PauseState || initialState == PlayState {
+					switch p.currentState {
+					case PlayState, PauseState:
 						p.moveCursor(-2)
+						processChan <- NextState
+					case IdleState:
+						p.moveCursor(-1)
+						p.Play()
 					}
-
-					p.currentState = IdleState
-					p.Play()
 				}
 			}
 		}
 	}
 }
 
-func (p *Player) playableListener() (chan<- PlayerState, chan<- Playable) {
+func (p *Player) playableListener() (chan<- PlayerState, chan<- PlayableCodec) {
 	logger := p.logger.With(slog.String("goroutine", "playableListener()"))
 	stateChan := make(chan PlayerState)
-	playChan := make(chan Playable)
+	playChan := make(chan PlayableCodec)
 
 	go func() {
 		var playerCtx context.Context
@@ -286,8 +315,9 @@ func (p *Player) playableListener() (chan<- PlayerState, chan<- Playable) {
 			case s := <-stateChan:
 				// Nothing to do if not currently playing, but we don't want to have the channel backed up when idle
 				logger.Debug("discarded state change request", slog.String("requested", s.String()))
-			case playable := <-playChan:
+			case pc := <-playChan:
 				p.bytesSent = 0
+				playable := pc.playable
 
 				logger.Info("downloading "+playable.Type(), slog.Any("playable", nameArtistAlbumType(playable)))
 
@@ -300,9 +330,9 @@ func (p *Player) playableListener() (chan<- PlayerState, chan<- Playable) {
 					continue
 				}
 
-				err = p.codec.Open(r)
+				err = pc.codec.Open(r)
 				if err != nil {
-					slog.Error("failed to open as "+playable.Type(),
+					logger.Error("failed to open as "+playable.Type(),
 						slog.String("error", err.Error()),
 						slog.Any("playable", nameArtistAlbumType(playable)),
 					)
@@ -313,7 +343,7 @@ func (p *Player) playableListener() (chan<- PlayerState, chan<- Playable) {
 					for {
 						select {
 						case <-playerCtx.Done():
-							logger.Debug("player context closed")
+							logger.Debug("player context closed 1")
 							return
 						case state := <-stateChan:
 							switch state {
@@ -331,7 +361,6 @@ func (p *Player) playableListener() (chan<- PlayerState, chan<- Playable) {
 											// here. But when a NextState is received, we need to stop blocking and
 											// signal parent loop to cancel.
 											p.playCancel()
-											return
 										}
 									}
 								}()
@@ -339,10 +368,10 @@ func (p *Player) playableListener() (chan<- PlayerState, chan<- Playable) {
 								logger.Debug("skipping "+playable.Type(),
 									slog.Any("playable", nameArtistAlbumType(playable)),
 								)
-								return
+								p.playCancel()
 							}
 						default:
-							n, err := p.codec.Read(buf)
+							n, err := pc.codec.Read(buf)
 							if err != nil && err == io.EOF {
 								logger.Info("finished playing "+playable.Type(),
 									slog.Any("playable", nameArtistAlbumType(playable)),
@@ -361,6 +390,7 @@ func (p *Player) playableListener() (chan<- PlayerState, chan<- Playable) {
 
 							select {
 							case <-playerCtx.Done():
+								logger.Debug("player context closed 2")
 								return
 							case p.outChan <- out:
 								p.bytesSent++
@@ -369,7 +399,7 @@ func (p *Player) playableListener() (chan<- PlayerState, chan<- Playable) {
 					}
 				}()
 
-				if err = p.codec.Close(); err != nil {
+				if err = pc.codec.Close(); err != nil {
 					logger.Error("failed closing codec", slog.String("error", err.Error()))
 				}
 
